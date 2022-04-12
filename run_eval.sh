@@ -14,4 +14,4 @@ CUDA_VISIBLE_DEVICES=${GPU} ./train_multi.sh ${NUM_GPUS} \
     --eval_batch_size ${EVAL_BS} \
     --cpt_file_name ${MODEL_STR} \
     --skip_train True \
-    --re_eval_flag False
+    --re_eval_flag True
