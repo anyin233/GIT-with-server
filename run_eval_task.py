@@ -27,6 +27,8 @@ def parse_args(in_args=None):
                             help="Models to be evaluated")
     arg_parser.add_argument('--re_eval_flag', type=strtobool, default=False,
                             help='Whether to re-evaluate previous predictions')
+    arg_parser.add_argument('--eval_epoch', type=int, default=0,
+                            help="Models to Evaluation")
 
     # add task setting arguments
     for key, val in DEETaskSetting.base_attr_default_pairs:
@@ -59,17 +61,7 @@ if __name__ == '__main__':
     # build task
     dee_task = DEETask(dee_setting, load_train=not in_argv.skip_train)
 
-    if not in_argv.skip_train:
-        # dump hyper-parameter settings
-        if dee_task.is_master_node():
-            fn = '{}.task_setting.json'.format(dee_setting.cpt_file_name)
-            dee_setting.dump_to(task_dir, file_name=fn)
-
-        dee_task.train(save_cpt_flag=in_argv.save_cpt_flag)
-    else:
-        dee_task.logging('Skip training')
-
-    dee_task.eval_only(12)
+    dee_task.eval_only(in_argv.eval_epoch)
     if dee_task.is_master_node():
         if in_argv.re_eval_flag:
             data_span_type2model_str2epoch_res_list = dee_task.reevaluate_dee_prediction(dump_flag=True)
