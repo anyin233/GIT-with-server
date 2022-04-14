@@ -794,6 +794,7 @@ class GITModel(nn.Module):
 
             return mix_loss
         else:
+            # FIXME 这里是进行数据输出所使用的代码
             # return a list object may not be supported by torch.nn.parallel.DataParallel
             # ensure to run it under the single-gpu mode
             eval_results = []

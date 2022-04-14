@@ -13,7 +13,7 @@ set_basic_log_config()
 
 def parse_args(in_args=None):
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument('--task_name', type=str, required=True,
+    arg_parser.add_argument('--task_name', type=str, default="try",
                             help='Take Name')
     arg_parser.add_argument('--data_dir', type=str, default='./Data',
                             help='Data directory')
@@ -21,13 +21,13 @@ def parse_args(in_args=None):
                             help='Experiment directory')
     arg_parser.add_argument('--save_cpt_flag', type=strtobool, default=True,
                             help='Whether to save cpt for each epoch')
-    arg_parser.add_argument('--skip_train', type=strtobool, default=False,
+    arg_parser.add_argument('--skip_train', type=strtobool, default=True,
                             help='Whether to skip training')
     arg_parser.add_argument('--eval_model_names', type=str, default='GIT',
                             help="Models to be evaluated")
     arg_parser.add_argument('--re_eval_flag', type=strtobool, default=False,
                             help='Whether to re-evaluate previous predictions')
-    arg_parser.add_argument('--eval_epoch', type=int, default=0,
+    arg_parser.add_argument('--eval_epoch', type=int, default=12,
                             help="Models to Evaluation")
 
     # add task setting arguments
@@ -44,6 +44,9 @@ def parse_args(in_args=None):
 
 if __name__ == '__main__':
     in_argv = parse_args()
+    os.environ['NUM_GPUS'] = '1'
+    os.environ['GPU'] = '0'
+    
 
     task_dir = os.path.join(in_argv.exp_dir, in_argv.task_name)
     if not os.path.exists(task_dir):
@@ -57,9 +60,13 @@ if __name__ == '__main__':
         **in_argv.__dict__
     )
     dee_setting.summary_dir_name = os.path.join(task_dir, "Summary")
+    # dee_setting.update_by_dict({
+    #     'no_cuda': True,
+    #     'optimize_on_cpu': True
+    # })
 
     # build task
-    dee_task = DEETask(dee_setting, load_train=not in_argv.skip_train)
+    dee_task = DEETask(dee_setting, load_train=False)
 
     dee_task.eval_only(in_argv.eval_epoch)
     if dee_task.is_master_node():

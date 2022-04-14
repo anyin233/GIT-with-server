@@ -70,7 +70,7 @@ class DEETask(BasePytorchTask):
     """Doc-level Event Extraction Task"""
 
     def __init__(self, dee_setting, load_train=True, load_dev=True, load_test=True,
-                 parallel_decorate=True):
+                 parallel_decorate=True, only_inference=False):
         super(DEETask, self).__init__(dee_setting, only_master_logging=dee_setting.only_master_logging)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logging('Initializing {}'.format(self.__class__.__name__))
@@ -82,7 +82,7 @@ class DEETask(BasePytorchTask):
         self.entity_label_list = DEEExample.get_entity_label_list()
         self.event_type_fields_pairs = DEEExample.get_event_type_fields_pairs() # event -> list of entity types
         # build example loader
-        self.example_loader_func = DEEExampleLoader(self.setting.rearrange_sent, self.setting.max_sent_len)
+        self.example_loader_func = DEEExampleLoader(self.setting.rearrange_sent, self.setting.max_sent_len, only_inference=only_inference)
 
         # build feature converter
         self.feature_converter_func = DEEFeatureConverter(
@@ -417,7 +417,43 @@ class DEETask(BasePytorchTask):
                 span_str = 'gold_span'
             else:
                 span_str = 'pred_span'
+            if dataset is None:
+                continue
+            model_str = self.setting.cpt_file_name.replace('.', '~')
 
+            decode_dump_name = decode_dump_template.format(data_type, span_str, model_str, epoch)
+            eval_dump_name = eval_dump_template.format(data_type, span_str, model_str, epoch)
+            self.eval(features, dataset, use_gold_span=gold_span_flag,
+                      dump_decode_pkl_name=decode_dump_name, dump_eval_json_name=eval_dump_name, epoch=epoch)
+
+    def inf_only(self, epoch, resume_cpt_flag=False):
+        if self.is_master_node():
+            print('\nPROGRESS: {:.2f}%\n'.format(epoch / self.setting.num_train_epochs * 100))
+        self.logging('Current teacher prob {}'.format(self.get_teacher_prob(batch_inc_flag=False)))
+        self.logging('Will load checkpoint file {}.cpt.{}'.format(self.setting.cpt_file_name, epoch))
+        self.resume_cpt_at(epoch)
+
+        eval_tasks = product(['test'], [False])
+
+        for task_idx, (data_type, gold_span_flag) in enumerate(eval_tasks):
+            if self.in_distributed_mode() and task_idx % dist.get_world_size() != dist.get_rank():
+                continue
+            self.logging("Current task is {}".format(task_idx))
+            if data_type == 'test':
+                features = self.test_features
+                dataset = self.test_dataset
+            elif data_type == 'dev':
+                features = self.dev_features
+                dataset = self.dev_dataset
+            else:
+                raise Exception('Unsupported data type {}'.format(data_type))
+            self.logging("Current task data type is {}".format(data_type))
+            if gold_span_flag:
+                span_str = 'gold_span'
+            else:
+                span_str = 'pred_span'
+            if dataset is None:
+                continue
             model_str = self.setting.cpt_file_name.replace('.', '~')
 
             decode_dump_name = decode_dump_template.format(data_type, span_str, model_str, epoch)

@@ -134,9 +134,10 @@ class DEEExample(object):
         return entity_label_list
 
 class DEEExampleLoader(object):
-    def __init__(self, rearrange_sent_flag, max_sent_len):
+    def __init__(self, rearrange_sent_flag, max_sent_len, only_inference=False):
         self.rearrange_sent_flag = rearrange_sent_flag
         self.max_sent_len = max_sent_len
+        self.only_inference = only_inference
 
     def rearrange_sent_info(self, detail_align_info):
         if 'ann_valid_dranges' not in detail_align_info:
@@ -246,7 +247,7 @@ class DEEExampleLoader(object):
             # if self.rearrange_sent_flag:
             #     detail_align_info = self.rearrange_sent_info(detail_align_info)
             # dee_example = DEEExample(annguid, detail_align_info)
-            dee_example = self.convert_dict_to_example(annguid, detail_align_info)
+            dee_example = self.convert_dict_to_example(annguid, detail_align_info, only_inference=self.only_inference)
             total_dee_examples.append(dee_example)
 
         return total_dee_examples
