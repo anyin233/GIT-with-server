@@ -61,7 +61,7 @@ if __name__ == '__main__':
     # build task
     dee_task = DEETask(dee_setting, load_train=False, load_dev=False, only_inference=True)
 
-    dee_task.inf_only(in_argv.eval_epoch)
+    data = dee_task.inf_only(in_argv.eval_epoch)
     
     # ensure every processes exit at the same time
     if dist.is_initialized():

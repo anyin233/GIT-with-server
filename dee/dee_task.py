@@ -313,7 +313,7 @@ class DEETask(BasePytorchTask):
         return latest_epoch
 
     def eval(self, features, dataset, use_gold_span=False,
-             dump_decode_pkl_name=None, dump_eval_json_name=None, epoch=None):
+             dump_decode_pkl_name=None, dump_eval_json_name=None, epoch=None, only_inference=False):
         self.logging('=' * 20 + 'Start Evaluation' + '=' * 20)
 
         if dump_decode_pkl_name is not None:
@@ -336,10 +336,13 @@ class DEETask(BasePytorchTask):
         else:
             dump_eval_json_path = None
 
-        total_eval_res = measure_dee_prediction(
-            self.event_type_fields_pairs, features, total_event_decode_results,
-            dump_json_path=dump_eval_json_path, writer=self.summary_writer, epoch=epoch
-        )
+        if not only_inference:
+            total_eval_res = measure_dee_prediction(
+                self.event_type_fields_pairs, features, total_event_decode_results,
+                dump_json_path=dump_eval_json_path, writer=self.summary_writer, epoch=epoch
+            )
+        else:
+            return total_event_decode_results
 
         return total_event_decode_results, total_eval_res
 
@@ -458,6 +461,6 @@ class DEETask(BasePytorchTask):
 
             decode_dump_name = decode_dump_template.format(data_type, span_str, model_str, epoch)
             eval_dump_name = eval_dump_template.format(data_type, span_str, model_str, epoch)
-            self.eval(features, dataset, use_gold_span=gold_span_flag,
-                      dump_decode_pkl_name=decode_dump_name, dump_eval_json_name=eval_dump_name, epoch=epoch)
+            return self.eval(features, dataset, use_gold_span=gold_span_flag,
+                      dump_decode_pkl_name=decode_dump_name, dump_eval_json_name=eval_dump_name, epoch=epoch, only_inference=True)
 
