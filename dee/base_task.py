@@ -113,10 +113,11 @@ def copy_optimizer_params_to_model(named_params_model, named_params_optimizer):
 class BasePytorchTask(object):
     """Basic task to support deep learning models on Pytorch"""
 
-    def __init__(self, setting, only_master_logging=False):
+    def __init__(self, setting, only_master_logging=False, only_inference=False):
         self.setting = setting
         self.logger = logging.getLogger(self.__class__.__name__)
         self.only_master_logging = only_master_logging
+        self.only_inference = only_inference
 
         if self.in_distributed_mode() and not dist.is_initialized():
             # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
@@ -330,6 +331,7 @@ class BasePytorchTask(object):
             raise Exception('Unexpected data type {}'.format(data_type))
 
     def _decorate_model(self, parallel_decorate=True):
+        
         self.logging('='*20 + 'Decorate Model' + '='*20)
 
         if self.setting.fp16:
@@ -584,8 +586,13 @@ class BasePytorchTask(object):
         iter_desc = 'Iteration'
         if self.in_distributed_mode():
             iter_desc = 'Rank {} {}'.format(dist.get_rank(), iter_desc)
+        
+        if self.only_inference:
+            eval_dataloader = eval_dataloader
+        else:
+            eval_dataloader = tqdm(eval_dataloader, desc=iter_desc)
 
-        for step, batch in enumerate(tqdm(eval_dataloader, desc=iter_desc)):
+        for step, batch in enumerate(eval_dataloader):
             batch = self.set_batch_to_device(batch)
 
             with torch.no_grad():

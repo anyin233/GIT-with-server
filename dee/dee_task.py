@@ -70,8 +70,8 @@ class DEETask(BasePytorchTask):
     """Doc-level Event Extraction Task"""
 
     def __init__(self, dee_setting, load_train=True, load_dev=True, load_test=True,
-                 parallel_decorate=True, only_inference=False):
-        super(DEETask, self).__init__(dee_setting, only_master_logging=dee_setting.only_master_logging)
+                 parallel_decorate=True, only_inference=False, inf_epoch=0):
+        super(DEETask, self).__init__(dee_setting, only_master_logging=dee_setting.only_master_logging, only_inference=only_inference)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logging('Initializing {}'.format(self.__class__.__name__))
 
@@ -83,7 +83,7 @@ class DEETask(BasePytorchTask):
         self.event_type_fields_pairs = DEEExample.get_event_type_fields_pairs() # event -> list of entity types
         # build example loader
         self.example_loader_func = DEEExampleLoader(self.setting.rearrange_sent, self.setting.max_sent_len, only_inference=only_inference)
-
+        
         # build feature converter
         self.feature_converter_func = DEEFeatureConverter(
             self.entity_label_list, self.event_type_fields_pairs,
@@ -94,10 +94,11 @@ class DEETask(BasePytorchTask):
         # LOAD DATA
         # self.example_loader_func: raw data -> example
         # self.feature_converter_func: example -> feature
-        self._load_data(
-            self.example_loader_func, self.feature_converter_func, convert_dee_features_to_dataset,
-            load_train=load_train, load_dev=load_dev, load_test=load_test,
-        )
+        if not self.only_inference:
+            self._load_data(
+                self.example_loader_func, self.feature_converter_func, convert_dee_features_to_dataset,
+                load_train=load_train, load_dev=load_dev, load_test=load_test,
+            )
         # customized mini-batch producer
         self.custom_collate_fn = prepare_doc_batch_dict
 
@@ -123,9 +124,21 @@ class DEETask(BasePytorchTask):
         self.teacher_cnt = None
         self.teacher_base = None
         self.reset_teacher_prob()
+        self.load_train = load_train
+        self.load_test = load_test
+        self.load_dev = load_dev
+        if self.only_inference:
+            self.resume_cpt_at(inf_epoch)
 
         self.logging('Successfully initialize {}'.format(self.__class__.__name__))
 
+    # for inference from server, reload dataset
+    def reload_data(self):
+        self._load_data(
+            self.example_loader_func, self.feature_converter_func, convert_dee_features_to_dataset,
+            load_train=self.load_train, load_dev=self.load_dev, load_test=self.load_test,
+        )
+        
     def reset_teacher_prob(self):
         self.min_teacher_prob = self.setting.min_teacher_prob
         if self.train_dataset is None:
@@ -314,7 +327,10 @@ class DEETask(BasePytorchTask):
 
     def eval(self, features, dataset, use_gold_span=False,
              dump_decode_pkl_name=None, dump_eval_json_name=None, epoch=None, only_inference=False):
-        self.logging('=' * 20 + 'Start Evaluation' + '=' * 20)
+        if only_inference:
+           self.logging('=' * 20 + 'Start inference' + '=' * 20)
+        else: 
+            self.logging('=' * 20 + 'Start Evaluation' + '=' * 20)
 
         if dump_decode_pkl_name is not None:
             dump_decode_pkl_path = os.path.join(self.setting.output_dir, dump_decode_pkl_name)
@@ -328,8 +344,6 @@ class DEETask(BasePytorchTask):
             features=features, use_gold_span=use_gold_span,
         )
 
-        self.logging('Measure DEE Prediction')
-
         if dump_eval_json_name is not None:
             dump_eval_json_path = os.path.join(self.setting.output_dir, dump_eval_json_name)
             self.logging('Dumping eval results into {}'.format(dump_eval_json_name))
@@ -337,6 +351,7 @@ class DEETask(BasePytorchTask):
             dump_eval_json_path = None
 
         if not only_inference:
+            self.logging('Measure DEE Prediction')
             total_eval_res = measure_dee_prediction(
                 self.event_type_fields_pairs, features, total_event_decode_results,
                 dump_json_path=dump_eval_json_path, writer=self.summary_writer, epoch=epoch
@@ -429,14 +444,14 @@ class DEETask(BasePytorchTask):
             self.eval(features, dataset, use_gold_span=gold_span_flag,
                       dump_decode_pkl_name=decode_dump_name, dump_eval_json_name=eval_dump_name, epoch=epoch)
 
-    def inf_only(self, epoch, resume_cpt_flag=False):
-        if self.is_master_node():
-            print('\nPROGRESS: {:.2f}%\n'.format(epoch / self.setting.num_train_epochs * 100))
-        self.logging('Current teacher prob {}'.format(self.get_teacher_prob(batch_inc_flag=False)))
-        self.logging('Will load checkpoint file {}.cpt.{}'.format(self.setting.cpt_file_name, epoch))
-        self.resume_cpt_at(epoch)
+    def inf_only(self, resume_cpt_flag=False):
+        # if self.is_master_node():
+        #     print('\nPROGRESS: {:.2f}%\n'.format(epoch / self.setting.num_train_epochs * 100))
+        # self.logging('Current teacher prob {}'.format(self.get_teacher_prob(batch_inc_flag=False)))
+        # self.logging('Will load checkpoint file {}.cpt.{}'.format(self.setting.cpt_file_name, epoch))
 
-        eval_tasks = product(['test'], [False])
+
+        eval_tasks = [('test', False)]
 
         for task_idx, (data_type, gold_span_flag) in enumerate(eval_tasks):
             if self.in_distributed_mode() and task_idx % dist.get_world_size() != dist.get_rank():
@@ -459,8 +474,7 @@ class DEETask(BasePytorchTask):
                 continue
             model_str = self.setting.cpt_file_name.replace('.', '~')
 
-            decode_dump_name = decode_dump_template.format(data_type, span_str, model_str, epoch)
-            eval_dump_name = eval_dump_template.format(data_type, span_str, model_str, epoch)
-            return self.eval(features, dataset, use_gold_span=gold_span_flag,
-                      dump_decode_pkl_name=decode_dump_name, dump_eval_json_name=eval_dump_name, epoch=epoch, only_inference=True)
+            # decode_dump_name = decode_dump_template.format(data_type, span_str, model_str, epoch)
+            # eval_dump_name = eval_dump_template.format(data_type, span_str, model_str, epoch)
+            return self.eval(features, dataset, use_gold_span=False, only_inference=True)
 

@@ -42,8 +42,12 @@ def get_doc_span_info_list(doc_token_types_list, doc_fea_list, use_gold_span=Fal
                 # do not get valid entity span results,
                 # just use gold spans to avoid crashing at earlier iterations
                 # TODO: consider generate random negative spans
+                # FIXME: just use static negative tup list but may not right
                 span_token_tup_list = doc_fea.span_token_ids_list
                 span_dranges_list = doc_fea.span_dranges_list
+                span_token_tup_list = [(-1, -1, -1)]
+                span_dranges_list = [[(-1, -1, -1)]]
+                
 
         # one span may have multiple mentions
         span_mention_range_list, mention_drange_list, mention_type_list = get_span_mention_info(
@@ -671,6 +675,18 @@ class GITModel(nn.Module):
 
         # get doc span-level info for event extraction
         doc_span_info_list = get_doc_span_info_list(doc_token_types_list, doc_fea_list, use_gold_span=use_gold_span)
+        if doc_span_info_list[0].mention_drange_list == [(-1, -1, -1)]:
+            eval_results = []
+            for batch_idx, ex_idx in enumerate(ex_idx_list):
+                eval_results.append(
+                    self.get_eval_on_doc(
+                        doc_fea_list[batch_idx],
+                        doc_span_info_list[batch_idx],
+                        span_context_list=[],
+                        doc_sent_context=[]
+                    )
+                )
+            return eval_results
 
         # HACK
         graphs = []
@@ -690,6 +706,7 @@ class GITModel(nn.Module):
             
             # 2. sentence-mention
             doc_mention_emb = []
+            # print("start create sentence mention")
             for mention_id, (sent_idx, char_s, char_e) in enumerate(doc_span_info.mention_drange_list):
                 mention_id += sent_num
                 mention_token_emb = doc_token_emb_list[idx][sent_idx, char_s: char_e, :]  # [num_mention_tokens, hidden_size]
@@ -702,6 +719,7 @@ class GITModel(nn.Module):
                 else:
                     raise Exception('Unknown seq_reduce_type {}'.format(self.config.seq_reduce_type))
                 doc_mention_emb.append(mention_emb.unsqueeze(0))
+                # print(doc_mention_emb)
 
                 sent2mention_id[sent_idx].append(mention_id)
                 d[('node', 's-m', 'node')].append((mention_id, sent_idx))
@@ -794,7 +812,7 @@ class GITModel(nn.Module):
 
             return mix_loss
         else:
-            # FIXME 这里是进行数据输出所使用的代码
+            # 这里是进行数据输出所使用的代码
             # return a list object may not be supported by torch.nn.parallel.DataParallel
             # ensure to run it under the single-gpu mode
             eval_results = []
