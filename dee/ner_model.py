@@ -267,6 +267,7 @@ class CRFLayer(nn.Module):
     def get_gold_score(self, seq_emit_score, seq_token_label):
         """
         Calculate the score of the given sequence label
+        Calculate f function in CRF
         :param seq_emit_score: [seq_len, batch_size, tag_size]
         :param seq_token_label: [seq_len, batch_size]
         :return: Tensor with Size([batch_size])
@@ -291,15 +292,15 @@ class CRFLayer(nn.Module):
         # gather according to token label at the current token
         gold_trans_score = torch.gather(seq_trans_score, 2, seq_cur_label)  # [seq_len+1, batch_size, 1, tag_size]
         # gather according to token label at the previous token
-        gold_trans_score = torch.gather(gold_trans_score, 3, seq_prev_label)  # [seq_len+1, batch_size, 1, 1]
-        batch_trans_score = gold_trans_score.sum(dim=0).squeeze(-1).squeeze(-1)  # [batch_size]
+        gold_trans_score = torch.gather(gold_trans_score, 3, seq_prev_label)  # [seq_len+1, batch_size, 1, 1] last two dim stand for matrix element g
+        batch_trans_score = gold_trans_score.sum(dim=0).squeeze(-1).squeeze(-1)  # [batch_size] sum all g
 
-        gold_emit_score = torch.gather(seq_emit_score, 2, seq_token_label.unsqueeze(-1))  # [seq_len, batch_size, 1]
+        gold_emit_score = torch.gather(seq_emit_score, 2, seq_token_label.unsqueeze(-1))  # [seq_len, batch_size, 1] gather all h
         batch_emit_score = gold_emit_score.sum(dim=0).squeeze(-1)  # [batch_size]
 
-        gold_score = batch_trans_score + batch_emit_score  # [batch_size]
+        gold_score = batch_trans_score + batch_emit_score  # [batch_size] f
 
-        return gold_score
+        return gold_score # return f
 
     def viterbi_decode(self, seq_emit_score):
         """
@@ -356,16 +357,16 @@ class CRFLayer(nn.Module):
             nll_loss: negative log-likelihood loss
             seq_token_pred: seqeunce predictions
         """
-        if batch_first:
-            # CRF assumes the input size of [seq_len, batch_size, hidden_size]
+        if batch_first: # denote the batch_size place
+            # CRF assumes the input size of [batch_size, seq_len, hidden_size] => [seq_len, batch_size, hidden_size]
             seq_token_emb = seq_token_emb.transpose(0, 1).contiguous()
             if seq_token_label is not None:
                 seq_token_label = seq_token_label.transpose(0, 1).contiguous()
 
         seq_emit_score = self.hidden2tag(seq_token_emb)  # [seq_len, batch_size, tag_size]
         if train_flag:
-            gold_score = self.get_gold_score(seq_emit_score, seq_token_label)  # [batch_size]
-            log_partition = self.get_log_parition(seq_emit_score)  # [batch_size]
+            gold_score = self.get_gold_score(seq_emit_score, seq_token_label)  # [batch_size] log(f)
+            log_partition = self.get_log_parition(seq_emit_score)  # [batch_size] Z
             nll_loss = log_partition - gold_score
         else:
             nll_loss = None

@@ -6,6 +6,8 @@ import torch.nn.functional as F
 import math
 from collections import OrderedDict, namedtuple, defaultdict
 import random
+import logging
+import time
 
 from . import transformer
 from .ner_model import NERModel
@@ -179,6 +181,7 @@ class GITModel(nn.Module):
 
         self.config = config
         self.event_type_fields_pairs = event_type_fields_pairs
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         if ner_model is None:
             self.ner_model = NERModel(config)
@@ -475,9 +478,12 @@ class GITModel(nn.Module):
                 doc_span_info, event_idx2event_decode_paths
 
         batch_span_context = torch.cat(span_context_list, dim=0)
+        start_time = time.time()
 
         # 1. get event type prediction
         event_pred_list = self.get_event_cls_info(doc_sent_context, doc_fea, train_flag=False)
+        self.logging("Event type prediction cost about {}s".format(int(time.time() - start_time)))
+        start_time = time.time()
 
         # 2. for each event type, get field prediction
         # the following mappings are all implemented using list index
@@ -545,8 +551,13 @@ class GITModel(nn.Module):
 
                 # update decoding paths
                 last_field_paths = cur_paths
-                span_context_bank = torch.cat(span_context_bank, dim=0).cuda()
-                prev_global_memory_idx = torch.LongTensor(prev_global_memory_idx_list).cuda()
+                try:
+                    span_context_bank = torch.cat(span_context_bank, dim=0).cuda()
+                    prev_global_memory_idx = torch.LongTensor(prev_global_memory_idx_list).cuda()
+                except:
+                    span_context_bank = torch.cat(span_context_bank, dim=0)
+                    prev_global_memory_idx = torch.LongTensor(prev_global_memory_idx_list)
+                
                 global_path_memory = self.event_tables[event_idx].rnn_cell(span_context_bank,
                     (
                         torch.index_select(global_path_memory[0], dim=0, index=prev_global_memory_idx),
@@ -574,6 +585,7 @@ class GITModel(nn.Module):
             event_idx2event_decode_paths.append(last_field_paths)
             event_idx2obj_idx2field_idx2token_tup.append(obj_idx2field_idx2token_tup)
 
+        self.logging("Tracker cost about {}s".format(int(time.time() - start_time)))
         # the first three terms are for metric calculation, the last two are for case studies
         return doc_fea.ex_idx, event_pred_list, event_idx2obj_idx2field_idx2token_tup, \
             doc_span_info, event_idx2event_decode_paths
@@ -652,6 +664,9 @@ class GITModel(nn.Module):
 
         return doc_token_emb_list, doc_token_masks_list, doc_token_types_list, doc_sent_emb_list, doc_sent_loss_list
 
+    def logging(self, msg, level=logging.INFO):
+        self.logger.log(level, msg)
+
     def forward(self, doc_batch_dict, doc_features,
                 train_flag=True, use_gold_span=False, teacher_prob=1,
                 event_idx2entity_idx2field_idx=None):
@@ -662,6 +677,10 @@ class GITModel(nn.Module):
                 use_gold_span = True
             else:
                 use_gold_span = False
+        
+        if not train_flag:
+            start_time = time.time()
+            self.logging("="*20 + "Start Recode inference Time" + "="*20)
 
         # get doc token-level local context
         doc_token_emb_list, doc_token_masks_list, doc_token_types_list, doc_sent_emb_list, doc_sent_loss_list = \
@@ -675,6 +694,9 @@ class GITModel(nn.Module):
 
         # get doc span-level info for event extraction
         doc_span_info_list = get_doc_span_info_list(doc_token_types_list, doc_fea_list, use_gold_span=use_gold_span)
+        
+        # use this to create a shortcut for inference task
+        # NOTICE: Only when no vaild entity been extracted will use this shortcut
         if doc_span_info_list[0].mention_drange_list == [(-1, -1, -1)]:
             eval_results = []
             for batch_idx, ex_idx in enumerate(ex_idx_list):
@@ -689,8 +711,14 @@ class GITModel(nn.Module):
             return eval_results
 
         # HACK
+        # build graph
         graphs = []
         node_features = []
+        if not train_flag:
+            cur_time = time.time()
+            self.logging("Encode/Embedding cost about {}s".format(int(cur_time - start_time)))
+            start_time = cur_time
+            
         for idx, doc_span_info in enumerate(doc_span_info_list):
             sent2mention_id = defaultdict(list)
             d = defaultdict(list)
@@ -708,7 +736,7 @@ class GITModel(nn.Module):
             doc_mention_emb = []
             # print("start create sentence mention")
             for mention_id, (sent_idx, char_s, char_e) in enumerate(doc_span_info.mention_drange_list):
-                mention_id += sent_num
+                mention_id += sent_num # to make sure feature in graph is at right place
                 mention_token_emb = doc_token_emb_list[idx][sent_idx, char_s: char_e, :]  # [num_mention_tokens, hidden_size]
                 if self.config.seq_reduce_type == 'AWA':
                     mention_emb = self.span_token_reducer(mention_token_emb)  # [hidden_size]
@@ -796,6 +824,11 @@ class GITModel(nn.Module):
             doc_span_context_list.append(span_context_list)
             cur_idx += node_num
 
+        if not train_flag:
+            cur_time = time.time()
+            self.logging("Graph Network Computing cost about {}s".format(int(cur_time - start_time)))
+            start_time = cur_time
+            
         if train_flag:
             doc_event_loss_list = []
             for batch_idx, ex_idx in enumerate(ex_idx_list):
@@ -816,7 +849,7 @@ class GITModel(nn.Module):
             # return a list object may not be supported by torch.nn.parallel.DataParallel
             # ensure to run it under the single-gpu mode
             eval_results = []
-
+            
             for batch_idx, ex_idx in enumerate(ex_idx_list):
                 eval_results.append(
                     self.get_eval_on_doc(
@@ -826,7 +859,7 @@ class GITModel(nn.Module):
                         doc_sent_context=doc_sent_context_list[batch_idx]
                     )
                 )
-
+            self.logging("Tracker and Event type Classification cost about {}s".format(int(time.time() - start_time)))
             return eval_results
 
 def append_all_spans(last_token_path_list, field_idx, field_idx2span_token_tup2dranges):
