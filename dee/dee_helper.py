@@ -119,7 +119,7 @@ class DEEExample(object):
     def get_entity_label_list():
         visit_set = set()
         entity_label_list = [NERExample.basic_entity_label]
-
+        cnt = 0
         for field in common_fields:
             if field not in visit_set:
                 visit_set.add(field)
@@ -127,6 +127,7 @@ class DEEExample(object):
 
         for event_name, fields in event_type_fields_list:
             for field in fields:
+                cnt += 1
                 if field not in visit_set:
                     visit_set.add(field)
                     entity_label_list.extend(['B-' + field, 'I-' + field])
